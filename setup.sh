@@ -40,5 +40,14 @@ else
     echo "  created  $JIRA_TOKEN"
 fi
 
+# ── sonar-token ───────────────────────────────────────────────────────────────
+SONAR_TOKEN="$SECRETS/sonar-token"
+if [ -f "$SONAR_TOKEN" ]; then
+    echo "  skipped  $SONAR_TOKEN (already exists)"
+else
+    echo "your-sonarqube-user-token-here" > "$SONAR_TOKEN"
+    echo "  created  $SONAR_TOKEN"
+fi
+
 echo ""
 echo "Fill in secrets/ with real values, then run ./start.sh"

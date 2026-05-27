@@ -292,7 +292,8 @@ def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_ur
     conflict_txt = " CONFLICT" if pr.get("merge_outcome") == "CONFLICTED" else ""
 
     # fixed-width right side
-    right = f" {appr_str}{nw_txt} Tasks:{tasks}  {build_txt} {qg_txt}{conflict_txt}"
+    tasks_txt = f" Tasks:{tasks}" if tasks > 0 else ""
+    right = f" {appr_str}{nw_txt}{tasks_txt}  {build_txt} {qg_txt}{conflict_txt}"
     right_w = len(right)
 
     # compute space for title
@@ -310,12 +311,12 @@ def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_ur
     safe_addlink(win, y, x, title, url, ca(C_BRIGHT))
 
     rx = max_x - right_w - 1
-    task_c = C_YELLOW if tasks > 0 else C_DIM
     ax = rx
     safe_addstr(win, y, ax,                             f" {appr_str}", ca(appr_c));  ax += 1 + len(appr_str)
     if nw_txt:
         safe_addstr(win, y, ax,                         " NEEDS WORK",  ca(C_RED));   ax += len(" NEEDS WORK")
-    safe_addstr(win, y, ax + 1,                         f"Tasks:{tasks}", ca(task_c))
+    if tasks > 0:
+        safe_addstr(win, y, ax + 1,                     f"Tasks:{tasks}", ca(C_YELLOW))
     bx = max_x - len(build_txt) - len(qg_txt) - len(conflict_txt) - 3
     safe_addlink(win, y, bx,                            build_txt,      pr.get("build_url",""),  ca(build_c))
     safe_addstr(win, y, bx + len(build_txt) + 1,        qg_txt,         ca(qg_c))

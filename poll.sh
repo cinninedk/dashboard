@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/secrets/credentials"
 PASSWORD=$(cat "$SCRIPT_DIR/secrets/bitbucket-token")
 JIRA_PASSWORD=$(cat "$SCRIPT_DIR/secrets/jira-token")
+SONAR_PASSWORD=$(cat "$SCRIPT_DIR/secrets/sonar-token")
 INTERVAL="${1:-60}"
 
 OUT_DIR="$(dirname "$0")/data"
@@ -34,22 +35,53 @@ get_sonar_info() {
     local project="$1" slug="$2" commit="$3"
     local reports
     reports=$(curl -s -H "Authorization: Bearer $PASSWORD" \
-        "$STASH_URL/rest/insights/1.0/projects/$project/repos/$slug/commits/$commit/reports")
-    echo "$reports" | jq -r '
+        "$STASH_URL/rest/insights/1.0/projects/$project/repos/$slug/commits/$commit/reports" \
+        | LC_ALL=C sed 's/\\uD[89ABab][0-9A-Fa-f][0-9A-Fa-f]\\u[Dd][CDEFcdef][0-9A-Fa-f][0-9A-Fa-f]/?/g')
+
+    # Extract link + metrics in one jq pass (tab-separated on one line)
+    local row
+    row=$(echo "$reports" | jq -r '
         [.values[]? | select(
             ((.key // "") | ascii_downcase | test("sonar|code-quality")) or
             ((.title // "") | ascii_downcase | test("sonar|code quality")) or
             ((.reporter // "") | ascii_downcase | test("sonar"))
         )][0] as $r |
-        if $r != null then
-            ($r.result // "NONE"),
+        if $r != null then [
+            ($r.link // ""),
             ($r.data // [] | map(select(.title | test("[Bb]ugs")))     | .[0].value // 0 | tostring),
             ($r.data // [] | map(select(.title | test("[Ss]mells")))   | .[0].value // 0 | tostring),
             ($r.data // [] | map(select(.title | test("[Vv]ulnerab"))) | .[0].value // 0 | tostring),
             ($r.data // [] | map(select(.title | test("[Hh]otspot")))  | .[0].value // 0 | tostring)
-        else
-            "NONE", "0", "0", "0", "0"
-        end'
+        ] | join("\t")
+        else "\t0\t0\t0\t0" end')
+
+    local sonar_link bugs smells vulns hotspots
+    IFS=$'\t' read -r sonar_link bugs smells vulns hotspots <<< "$row"
+
+    local qg_raw="NONE"
+    if [ -n "$sonar_link" ] && [ "$sonar_link" != "null" ]; then
+        local sonar_base sonar_proj sonar_branch
+        sonar_base=$(echo "$sonar_link" | grep -oE 'https?://[^/]+')
+        sonar_proj=$(echo "$sonar_link" | grep -oE '[?&]id=[^&]+' | cut -d= -f2 \
+            | python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null)
+        sonar_branch=$(echo "$sonar_link" | grep -oE '[?&]branch=[^&]+' | cut -d= -f2 \
+            | python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null)
+
+        if [ -n "$sonar_proj" ]; then
+            qg_raw=$(curl -s -H "Authorization: Bearer $SONAR_PASSWORD" \
+                --get \
+                --data-urlencode "projectKey=$sonar_proj" \
+                ${sonar_branch:+--data-urlencode "branch=$sonar_branch"} \
+                "$sonar_base/api/qualitygates/project_status" \
+                | jq -r '.projectStatus.status // "NONE"')
+        fi
+    fi
+
+    echo "$qg_raw"
+    echo "${bugs:-0}"
+    echo "${smells:-0}"
+    echo "${vulns:-0}"
+    echo "${hotspots:-0}"
 }
 
 # Map sonar result to our labels
@@ -169,7 +201,7 @@ log "Bitbucket: $(echo "$MY_PRS_JSON" | jq 'length') my PRs, $(echo "$REV_PRS_JS
 log "Fetching Jira issues..."
 
 # Fetch issues assigned to me, in the relevant statuses, across configured projects
-JQL="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND (assignee = currentUser() OR status CHANGED FROM \"Implement\" BY currentUser()) AND status in (\"Open\",\"Reopened\",\"Implement\",\"Quality Assurance\",\"Business Validation\",\"Resolved\") ORDER BY updated DESC"
+JQL="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND assignee = currentUser() AND status in (\"Open\",\"Reopened\",\"Implement\",\"Quality Assurance\",\"Business Validation\",\"Resolved\") ORDER BY updated DESC"
 
 JIRA_RAW=$(curl -s \
     "$JIRA_URL/rest/api/2/search" \

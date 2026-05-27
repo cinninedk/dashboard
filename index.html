@@ -497,7 +497,7 @@
     const nwBadge = needsWork > 0 ? `<span class="badge b-fail">NEEDS WORK</span>` : '';
     const tasks = pr.tasks > 0
       ? `<span style="color:var(--yellow)">Tasks:${pr.tasks}</span>`
-      : `<span style="color:var(--dim)">Tasks:0</span>`;
+      : '';
 
     const conflict = pr.merge_outcome === 'CONFLICTED'
       ? `<span class="badge b-fail">CONFLICT</span>`
