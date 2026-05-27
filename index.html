@@ -413,10 +413,21 @@
   let JIRA  = ''; // populated from jira.json jira_url field
   const SESSION_START = Date.now();
 
-  let bbData   = null;
-  let jiraData = null;
-  let nextAt   = null;
-  let refreshTimer = null;
+  let bbData        = null;
+  let jiraData      = null;
+  let nextAt        = null;
+  let refreshTimer  = null;
+  let lastActivity  = Date.now();
+
+  const ACTIVE_MS   = 5 * 60 * 1000;  // 5 min idle threshold
+  const ACTIVE_INT  = 10_000;          // 10s when active
+  const IDLE_INT    = 60_000;          // 60s when idle
+
+  function touchActivity() { lastActivity = Date.now(); }
+  function isActive() { return Date.now() - lastActivity < ACTIVE_MS; }
+
+  ['mousemove','keydown','scroll','click'].forEach(e =>
+    document.addEventListener(e, touchActivity, { passive: true }));
 
   // ── Utilities ──────────────────────────────────────────────────────────
 
@@ -683,8 +694,9 @@
   function scheduleRefresh() {
     if (refreshTimer) clearTimeout(refreshTimer);
     if (isWorkHours()) {
-      nextAt = Date.now() + 60_000;
-      refreshTimer = setTimeout(loadData, 60_000);
+      const interval = isActive() ? ACTIVE_INT : IDLE_INT;
+      nextAt = Date.now() + interval;
+      refreshTimer = setTimeout(loadData, interval);
     } else {
       nextAt = null;
     }

@@ -228,6 +228,14 @@ jq -n \
     > "$JR_OUT"
 
 log "Jira: $(echo "$ISSUES_JSON" | jq 'length') issues written"
-log "Done. BB → $BB_OUT  |  Jira → $JR_OUT. Sleeping ${INTERVAL}s."
-sleep "$INTERVAL"
+
+ACTIVE_FILE="$OUT_DIR/.active"
+if [ -f "$ACTIVE_FILE" ] && \
+   [ $(( $(date +%s) - $(stat -f %m "$ACTIVE_FILE") )) -lt 300 ]; then
+    SLEEP=20
+else
+    SLEEP=60
+fi
+log "Done. BB → $BB_OUT  |  Jira → $JR_OUT. Sleeping ${SLEEP}s."
+sleep "$SLEEP"
 done
