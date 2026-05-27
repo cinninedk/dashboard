@@ -286,7 +286,7 @@ def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_ur
     elif appr > 0:
         appr_str, appr_c = f"{appr}/{total} approved", C_YELLOW
     else:
-        appr_str, appr_c = "Unapproved",   C_RED
+        appr_str, appr_c = "Pending",      C_DIM
 
     # conflict badge
     conflict_txt = " CONFLICT" if pr.get("merge_outcome") == "CONFLICTED" else ""
