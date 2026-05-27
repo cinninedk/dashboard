@@ -78,7 +78,8 @@ process_prs_to_json() {
         branch=$(echo "$pr"         | jq -r '.fromRef.displayId // ""')
         jira_key=$(echo "$branch"   | grep -oE '[A-Z]+-[0-9]+' | head -1)
         commit=$(echo "$pr"         | jq -r '.fromRef.latestCommit')
-        approvals=$(echo "$pr"      | jq -r '[.reviewers[]? | select(.approved == true)] | length')
+        approvals=$(echo "$pr"      | jq -r '[.reviewers[]? | select(.status == "APPROVED")] | length')
+        needs_work=$(echo "$pr"     | jq -r '[.reviewers[]? | select(.status == "NEEDS_WORK")] | length')
         reviewer_count=$(echo "$pr" | jq -r '.reviewers | length')
         tasks=$(echo "$pr"          | jq -r '.properties.openTaskCount // 0')
         comments=$(echo "$pr"       | jq -r '.properties.commentCount // 0')
@@ -112,6 +113,7 @@ process_prs_to_json() {
             --arg jira_key "$jira_key" \
             --arg commit "$commit" \
             --argjson approvals "$approvals" \
+            --argjson needs_work "$needs_work" \
             --argjson reviewer_count "$reviewer_count" \
             --argjson tasks "$tasks" \
             --argjson comments "$comments" \
@@ -126,7 +128,7 @@ process_prs_to_json() {
             --argjson hotspots "${hotspots:-0}" \
             '{id:$id, title:$title, repo:$repo, slug:$slug, project:$project,
               author:$author, branch:$branch, jira_key:$jira_key, commit:$commit,
-              approvals:$approvals, reviewer_count:$reviewer_count,
+              approvals:$approvals, needs_work:$needs_work, reviewer_count:$reviewer_count,
               tasks:$tasks, comments:$comments, merge_outcome:$merge_outcome,
               build_state:$build_state, build_name:$build_name, build_url:$build_url, qg_label:$qg_label,
               bugs:$bugs, smells:$smells, vulns:$vulns, hotspots:$hotspots}'

@@ -490,9 +490,11 @@
     const nappr = pr.approvals ?? 0;
     let apprText, apprColor;
     let appr;
-    if (total === 0)  { appr = `<span style="color:var(--dim)">No reviewers</span>`; }
+    const needsWork = pr.needs_work ?? 0;
+    if (total === 0)   { appr = `<span style="color:var(--dim)">No reviewers</span>`; }
     else if (nappr > 0){ appr = `<span class="badge b-succ">APPROVED</span>`; }
-    else              { appr = `<span style="color:var(--dim)">Pending</span>`; }
+    else               { appr = `<span style="color:var(--dim)">Pending</span>`; }
+    const nwBadge = needsWork > 0 ? `<span class="badge b-fail">NEEDS WORK</span>` : '';
     const tasks = pr.tasks > 0
       ? `<span style="color:var(--yellow)">Tasks:${pr.tasks}</span>`
       : `<span style="color:var(--dim)">Tasks:0</span>`;
@@ -525,7 +527,7 @@
           <span class="pr-repo" title="${esc(pr.repo)}">${esc(pr.repo)}</span>
           ${authorCol}
           <span class="pr-title">${titleHtml}</span>
-          <span class="pr-meta">${appr} ${tasks}</span>
+          <span class="pr-meta">${appr} ${nwBadge} ${tasks}</span>
           ${buildBadge(pr.build_state, pr.build_name, pr.build_url)}
           ${qgBadge(pr.qg_label)}
           ${conflict}

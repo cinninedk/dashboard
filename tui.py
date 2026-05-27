@@ -276,21 +276,23 @@ def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_ur
 
     build_txt, build_c = build_badge(pr.get("build_state"))
     qg_txt,    qg_c    = qg_badge(pr.get("qg_label"))
-    appr  = pr.get("approvals", 0)
-    total = pr.get("reviewer_count", 0)
-    tasks = pr.get("tasks", 0)
+    appr       = pr.get("approvals",  0)
+    needs_work = pr.get("needs_work", 0)
+    total      = pr.get("reviewer_count", 0)
+    tasks      = pr.get("tasks", 0)
     if total == 0:
         appr_str, appr_c = "No reviewers", C_DIM
     elif appr > 0:
         appr_str, appr_c = "Approved",     C_GREEN
     else:
         appr_str, appr_c = "Pending",      C_DIM
+    nw_txt = " NEEDS WORK" if needs_work > 0 else ""
 
     # conflict badge
     conflict_txt = " CONFLICT" if pr.get("merge_outcome") == "CONFLICTED" else ""
 
     # fixed-width right side
-    right = f" {appr_str} Tasks:{tasks}  {build_txt} {qg_txt}{conflict_txt}"
+    right = f" {appr_str}{nw_txt} Tasks:{tasks}  {build_txt} {qg_txt}{conflict_txt}"
     right_w = len(right)
 
     # compute space for title
@@ -309,8 +311,11 @@ def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_ur
 
     rx = max_x - right_w - 1
     task_c = C_YELLOW if tasks > 0 else C_DIM
-    safe_addstr(win, y, rx,                             f" {appr_str}", ca(appr_c))
-    safe_addstr(win, y, rx + 1 + len(appr_str) + 1,    f"Tasks:{tasks}",   ca(task_c))
+    ax = rx
+    safe_addstr(win, y, ax,                             f" {appr_str}", ca(appr_c));  ax += 1 + len(appr_str)
+    if nw_txt:
+        safe_addstr(win, y, ax,                         " NEEDS WORK",  ca(C_RED));   ax += len(" NEEDS WORK")
+    safe_addstr(win, y, ax + 1,                         f"Tasks:{tasks}", ca(task_c))
     bx = max_x - len(build_txt) - len(qg_txt) - len(conflict_txt) - 3
     safe_addlink(win, y, bx,                            build_txt,      pr.get("build_url",""),  ca(build_c))
     safe_addstr(win, y, bx + len(build_txt) + 1,        qg_txt,         ca(qg_c))
