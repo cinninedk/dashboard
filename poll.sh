@@ -61,7 +61,8 @@ get_sonar_info() {
 
     local qg_raw="NONE"
     if [ -n "$sonar_link" ] && [ "$sonar_link" != "null" ]; then
-        local sonar_proj sonar_branch
+        local sonar_base sonar_proj sonar_branch
+        sonar_base=$(echo "$sonar_link" | grep -oE 'https?://[^/]+')
         sonar_proj=$(echo "$sonar_link" | grep -oE '[?&]id=[^&]+' | cut -d= -f2 \
             | python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))" 2>/dev/null)
         sonar_branch=$(echo "$sonar_link" | grep -oE '[?&]branch=[^&]+' | cut -d= -f2 \
@@ -72,7 +73,7 @@ get_sonar_info() {
                 --get \
                 --data-urlencode "projectKey=$sonar_proj" \
                 ${sonar_branch:+--data-urlencode "branch=$sonar_branch"} \
-                "$SONAR_URL/api/qualitygates/project_status" \
+                "$sonar_base/api/qualitygates/project_status" \
                 | jq -r '.projectStatus.status // "NONE"')
         fi
     fi

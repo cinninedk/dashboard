@@ -16,8 +16,6 @@ else
     cat > "$CREDS" <<'EOF'
 STASH_URL="https://your-bitbucket-server"
 JIRA_URL="https://your-jira-server"
-SONAR_URL="https://your-sonarqube-server"
-JENKINS_URL="https://your-jenkins-server"
 JIRA_PROJECTS="PROJ1,PROJ2"
 EOF
     echo "  created  $CREDS"
