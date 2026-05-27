@@ -145,7 +145,7 @@ REVIEWER_PRS_RAW=$(curl -s -H "Authorization: Bearer $PASSWORD" \
             (.author.user.name != $user) and
             (.author.user.name | ascii_downcase | test("renovate") | not) and
             ((.fromRef.id // "") | ascii_downcase | test("renovate") | not) and
-            (.isDraft != true) and
+            (.draft != true) and
             ((.title // "") | ascii_downcase | test("wip|draft") | not)
         ))) | .size = ((.values // []) | length)
     ')
