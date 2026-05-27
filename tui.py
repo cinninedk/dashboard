@@ -286,7 +286,7 @@ def render_stats(win, bb: dict, jira: dict):
     hline(win, 1, 0, max_x)
 
 
-def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_url: str = ""):
+def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_url: str = "", show_branch: bool = False):
     """Render one PR (two lines: main + detail)."""
     pr_id   = f"#{pr.get('id','?')}"
     repo    = trunc(pr.get("repo",""), 14)
@@ -347,6 +347,9 @@ def render_pr_row(win, y: int, pr: dict, show_author: bool, max_x: int, stash_ur
 
     dx = 7   # indent past the #id column
     safe_addstr(win, dy, dx, commit, ca(C_BLUE));                   dx += len(commit) + 2
+    if show_branch:
+        branch = trunc(pr.get("branch", ""), 40)
+        safe_addstr(win, dy, dx, branch, ca(C_DIM));                dx += len(branch) + 2
     safe_addstr(win, dy, dx, f"bugs:{bugs}",     ca(C_RED    if bugs  > 0 else C_DIM)); dx += len(f"bugs:{bugs}")     + 2
     safe_addstr(win, dy, dx, f"smells:{smells}", ca(C_YELLOW if smells> 0 else C_DIM)); dx += len(f"smells:{smells}") + 2
     safe_addstr(win, dy, dx, f"vulns:{vulns}",   ca(C_RED    if vulns > 0 else C_DIM)); dx += len(f"vulns:{vulns}")   + 2
@@ -369,7 +372,7 @@ def render_prs_section(win, title: str, prs: list, show_author: bool, stash_url:
     for pr in prs:
         if row + 1 >= max_y:   # need 2 lines
             break
-        render_pr_row(win, row, pr, show_author, max_x, stash_url)
+        render_pr_row(win, row, pr, show_author, max_x, stash_url, show_branch=not show_author)
         row += 2
 
 

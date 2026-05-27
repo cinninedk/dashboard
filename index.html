@@ -482,7 +482,7 @@
 
   // ── Render helpers ──────────────────────────────────────────────────────
 
-  function prRow(pr, showAuthor) {
+  function prRow(pr, showAuthor, showBranch = false) {
     const url = (pr.project && pr.slug)
       ? `${STASH}/projects/${esc(pr.project)}/repos/${esc(pr.slug)}/pull-requests/${pr.id}`
       : null;
@@ -536,6 +536,7 @@
         </div>
         <div class="pr-detail">
           <span style="color:var(--blue)">${commitShort}</span>
+          ${showBranch ? `<span style="color:var(--dim)">${esc(pr.branch ?? '')}</span>` : ''}
           <span style="color:${bc}">bugs:${bugs}</span>
           <span style="color:${sc}">smells:${smells}</span>
           <span style="color:${vc}">vulns:${vulns}</span>
@@ -608,7 +609,7 @@
 
     // My PRs
     document.getElementById('my-prs-list').innerHTML = myPRs.length
-      ? myPRs.map(p => prRow(p, false)).join('')
+      ? myPRs.map(p => prRow(p, false, true)).join('')
       : '<div class="empty-msg">no open PRs</div>';
 
     // Reviewer PRs
