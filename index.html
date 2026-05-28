@@ -582,9 +582,10 @@
 
   function jiraCard(issue) {
     const url = JIRA ? `${JIRA}/browse/${esc(issue.key)}` : null;
+    const keyColor = issue.teknisk_qa ? 'var(--green)' : 'var(--bright)';
     const keyHtml = url
-      ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--bright);text-decoration:none">${esc(issue.key)}</a>`
-      : esc(issue.key);
+      ? `<a href="${url}" target="_blank" rel="noopener" style="color:${keyColor};text-decoration:none">${esc(issue.key)}</a>`
+      : `<span style="color:${keyColor}">${esc(issue.key)}</span>`;
     return `
       <div class="jira-card">
         <div class="card-key">${keyHtml}</div>
