@@ -409,7 +409,8 @@ def render_kanban(win, bb: dict | None, jira: dict | None):
     safe_addstr(win, 0, 1, "JIRA KANBAN", ca(C_BRIGHT, bold=True))
     hline(win, 1, 0, max_x)
 
-    issues = (jira.get("issues", []) if jira else []) or []
+    issues    = (jira.get("issues",     []) if jira else []) or []
+    tqa_issues = (jira.get("tqa_issues", []) if jira else []) or []
 
     cols = {
         "OPEN":      [i for i in issues if i.get("status") in ("OPEN", "REOPENED")],
@@ -425,55 +426,72 @@ def render_kanban(win, bb: dict | None, jira: dict | None):
     # column headers
     for ci, name in enumerate(col_names):
         x     = ci * col_w
-        count = len(cols[name])
+        count = len(cols[name]) + (len(tqa_issues) if name == "QA" else 0)
         label = f" {name} ({count})"
-        hattr = ca(C_BRIGHT if name == "REVIEW" else C_DIM)
+        hattr = ca(C_DIM)
         safe_addstr(win, 2, x, label, hattr)
         if ci < 4:
             vline_char(win, 2, x + col_w - 1, max_y - 2)
 
     hline(win, 3, 0, max_x)
 
+    jira_url = (jira.get("jira_url", "") if jira else "") or ""
+
+    def render_card(issue: dict, card_x: int, card_w: int, row: int) -> int:
+        key        = issue.get("key", "?")
+        summary    = issue.get("summary", "")
+        itype      = issue.get("type", "")
+        teknisk_qa = issue.get("teknisk_qa", False)
+        tc         = type_col(itype)
+        issue_url  = f"{jira_url}/browse/{key}" if jira_url else ""
+
+        if teknisk_qa:
+            key_color = C_GREEN if issue.get("assigned_to_me") else C_BRIGHT
+        else:
+            key_color = C_BRIGHT
+
+        if row >= max_y - 1:
+            return row
+        safe_addlink(win, row, card_x, trunc(key, card_w), issue_url, ca(key_color))
+        row += 1
+        if row >= max_y - 1:
+            return row
+        safe_addstr(win, row, card_x, trunc(summary, card_w), ca(C_DIM))
+        row += 1
+        if row >= max_y - 1:
+            return row
+        type_str = trunc(itype, card_w)
+        safe_addstr(win, row, card_x, type_str, ca(tc))
+        if teknisk_qa:
+            bx = card_x + len(type_str) + 1
+            safe_addstr(win, row, bx, "TEKN·QA", ca(C_BLUE))
+        row += 1
+        row += 1  # blank separator
+        return row
+
     # cards
     for ci, name in enumerate(col_names):
-        x = ci * col_w
+        x      = ci * col_w
         card_x = x + 1
         card_w = col_w - 2
         if card_w < 4:
             continue
         row = 4
-        for issue in cols[name]:
-            if row >= max_y - 1:
-                break
-            key        = issue.get("key", "?")
-            summary    = issue.get("summary", "")
-            itype      = issue.get("type", "")
-            teknisk_qa = issue.get("teknisk_qa", False)
-            tc         = type_col(itype)
-            jira_url   = (jira.get("jira_url", "") if jira else "") or ""
-            issue_url  = f"{jira_url}/browse/{key}" if jira_url else ""
-
-            key_color = C_GREEN if (teknisk_qa and issue.get("status") != "RESOLVED") else C_BRIGHT
-            safe_addlink(win, row, card_x,
-                         trunc(key, card_w), issue_url, ca(key_color))
-            row += 1
-            if row >= max_y - 1:
-                break
-            # summary — one line
-            safe_addstr(win, row, card_x,
-                        trunc(summary, card_w), ca(C_DIM))
-            row += 1
-            if row >= max_y - 1:
-                break
-            # type tag + optional TEKN·QA badge
-            type_str = trunc(itype, card_w)
-            safe_addstr(win, row, card_x, type_str, ca(tc))
-            if teknisk_qa:
-                bx = card_x + len(type_str) + 1
-                safe_addstr(win, row, bx, "TEKN·QA", ca(C_YELLOW))
-            row += 1
-            # blank separator
-            row += 1
+        if name == "QA":
+            # tqa_issues first, then regular QA
+            for issue in tqa_issues:
+                if row >= max_y - 1:
+                    break
+                row = render_card(issue, card_x, card_w, row)
+            for issue in cols[name]:
+                if row >= max_y - 1:
+                    break
+                row = render_card(issue, card_x, card_w, row)
+        else:
+            for issue in cols[name]:
+                if row >= max_y - 1:
+                    break
+                row = render_card(issue, card_x, card_w, row)
 
 
 def render_statusbar(win, bb: dict | None, next_at: float | None, session_start: float):

@@ -1,19 +1,17 @@
 #!/bin/bash
 # poll.sh — writes data/bitbucket.json and data/jira.json for the dashboard
-# Run once manually or via launchd every 60s.
-# Place this file next to index.html and the data/ folder.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/secrets/config"
 PASSWORD=$(cat "$SCRIPT_DIR/secrets/bitbucket-token")
 JIRA_PASSWORD=$(cat "$SCRIPT_DIR/secrets/jira-token")
 SONAR_PASSWORD=$(cat "$SCRIPT_DIR/secrets/sonar-token")
-INTERVAL="${1:-60}"
 
 OUT_DIR="$(dirname "$0")/data"
 mkdir -p "$OUT_DIR"
 BB_OUT="$OUT_DIR/bitbucket.json"
 JR_OUT="$OUT_DIR/jira.json"
+CACHE_FILE="$OUT_DIR/.build-cache.json"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 cfg() { grep "^$1:" "$SCRIPT_DIR/config.yaml" 2>/dev/null | awk -F': *' '{print $2}'; }
@@ -31,7 +29,7 @@ get_build_info() {
             (.values[0].url   // "")'
 }
 
-# Single curl: emits five lines — result, bugs, smells, vulns, hotspots
+# Two curls: emits five lines — qg_raw, bugs, smells, vulns, hotspots
 get_sonar_info() {
     local project="$1" slug="$2" commit="$3"
     local reports
@@ -39,7 +37,6 @@ get_sonar_info() {
         "$STASH_URL/rest/insights/1.0/projects/$project/repos/$slug/commits/$commit/reports" \
         | LC_ALL=C sed 's/\\uD[89ABab][0-9A-Fa-f][0-9A-Fa-f]\\u[Dd][CDEFcdef][0-9A-Fa-f][0-9A-Fa-f]/?/g')
 
-    # Extract link + metrics in one jq pass (tab-separated on one line)
     local row
     row=$(echo "$reports" | jq -r '
         [.values[]? | select(
@@ -85,7 +82,6 @@ get_sonar_info() {
     echo "${hotspots:-0}"
 }
 
-# Map sonar result to our labels
 qg_label() {
     case "$1" in
         PASS|OK)    echo "PASS" ;;
@@ -96,12 +92,20 @@ qg_label() {
 }
 
 # ── Per-poll fetch logic ──
+#
+# $1 — raw Bitbucket JSON
+# $2 — cache-updates tempfile (one JSON object per line, appended for each fresh fetch)
+#
+# Reads $CACHE (global) and $POLL_BUILD_STALE (global) set in the main loop.
+# Skips Jenkins+Sonar curls when the PR's commit is unchanged, the last build
+# wasn't INPROGRESS, and the cached data is newer than $POLL_BUILD_STALE seconds.
 
 process_prs_to_json() {
     local json_input="$1"
+    local cache_updates="$2"
     echo "$json_input" | jq -c '(.values // []) | map(select(.id != null)) | sort_by(.id) | .[]' | while read -r pr; do
         local id title repo slug project author branch jira_key commit \
-              approvals reviewer_count tasks comments merge_outcome
+              approvals needs_work reviewer_count tasks comments merge_outcome
         id=$(echo "$pr"             | jq -r '.id')
         title=$(echo "$pr"          | jq -r '.title')
         repo=$(echo "$pr"           | jq -r '.toRef.repository.name')
@@ -118,22 +122,73 @@ process_prs_to_json() {
         comments=$(echo "$pr"       | jq -r '.properties.commentCount // 0')
         merge_outcome=$(echo "$pr"  | jq -r '.properties.mergeResult.outcome // "CLEAN"')
 
-        local build_state build_name build_url
-        {
-            IFS= read -r build_state
-            IFS= read -r build_name
-            IFS= read -r build_url
-        } < <(get_build_info "$commit")
+        # ── Cache check ──
+        local cached c_commit c_state c_fetched c_age use_cache
+        cached=$(echo "$CACHE" | jq -c --argjson id "$id" '.[$id | tostring] // null')
+        use_cache=false
+        if [ "$cached" != "null" ]; then
+            c_commit=$(echo "$cached" | jq -r '.commit // ""')
+            c_state=$(echo "$cached"  | jq -r '.build_state // ""')
+            c_fetched=$(echo "$cached" | jq -r '.fetched_at // ""')
+            c_age=999999
+            if [ -n "$c_fetched" ] && [ "$c_fetched" != "null" ]; then
+                local ts
+                ts=$(date -jf "%Y-%m-%dT%H:%M:%SZ" "$c_fetched" +%s 2>/dev/null || echo 0)
+                [ "${ts:-0}" -gt 0 ] && c_age=$(( $(date +%s) - ts ))
+            fi
+            if [ "$commit" = "$c_commit" ] && \
+               [ "$c_state" != "INPROGRESS" ] && \
+               [ "$c_age" -lt "$POLL_BUILD_STALE" ]; then
+                use_cache=true
+            fi
+        fi
 
-        local qg_raw bugs smells vulns hotspots qg
-        {
-            IFS= read -r qg_raw
-            IFS= read -r bugs
-            IFS= read -r smells
-            IFS= read -r vulns
-            IFS= read -r hotspots
-        } < <(get_sonar_info "$project" "$slug" "$commit")
-        qg=$(qg_label "$qg_raw")
+        local build_state build_name build_url qg bugs smells vulns hotspots
+        if $use_cache; then
+            build_state=$(echo "$cached" | jq -r '.build_state')
+            build_name=$(echo "$cached"  | jq -r '.build_name')
+            build_url=$(echo "$cached"   | jq -r '.build_url')
+            qg=$(echo "$cached"          | jq -r '.qg_label')
+            bugs=$(echo "$cached"        | jq -r '.bugs')
+            smells=$(echo "$cached"      | jq -r '.smells')
+            vulns=$(echo "$cached"       | jq -r '.vulns')
+            hotspots=$(echo "$cached"    | jq -r '.hotspots')
+        else
+            # Fresh fetch from Jenkins + SonarQube
+            {
+                IFS= read -r build_state
+                IFS= read -r build_name
+                IFS= read -r build_url
+            } < <(get_build_info "$commit")
+
+            local qg_raw
+            {
+                IFS= read -r qg_raw
+                IFS= read -r bugs
+                IFS= read -r smells
+                IFS= read -r vulns
+                IFS= read -r hotspots
+            } < <(get_sonar_info "$project" "$slug" "$commit")
+            qg=$(qg_label "$qg_raw")
+
+            # Append cache entry (one compact JSON object per line)
+            jq -cn \
+                --argjson id "$id" \
+                --arg commit "$commit" \
+                --arg build_state "$build_state" \
+                --arg build_name "$build_name" \
+                --arg build_url "$build_url" \
+                --arg qg_label "$qg" \
+                --argjson bugs "${bugs:-0}" \
+                --argjson smells "${smells:-0}" \
+                --argjson vulns "${vulns:-0}" \
+                --argjson hotspots "${hotspots:-0}" \
+                --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '{($id|tostring): {commit:$commit, build_state:$build_state, build_name:$build_name,
+                  build_url:$build_url, qg_label:$qg_label, bugs:$bugs, smells:$smells,
+                  vulns:$vulns, hotspots:$hotspots, fetched_at:$fetched_at}}' \
+                >> "$cache_updates"
+        fi
 
         jq -n \
             --argjson id "$id" \
@@ -168,7 +223,32 @@ process_prs_to_json() {
     done
 }
 
+# ── Main loop ──
+
 while true; do
+
+# Read config (re-read each iteration so edits take effect without restart)
+POLL_ACTIVE=$(cfg poll_active_seconds);           POLL_ACTIVE=${POLL_ACTIVE:-15}
+POLL_IDLE=$(cfg poll_idle_seconds);               POLL_IDLE=${POLL_IDLE:-60}
+POLL_BUILD_STALE=$(cfg poll_build_stale_seconds); POLL_BUILD_STALE=${POLL_BUILD_STALE:-600}
+WORK_HOURS_ENABLED=$(cfg work_hours_enabled);     WORK_HOURS_ENABLED=${WORK_HOURS_ENABLED:-true}
+WORK_START_HOUR=$(cfg work_start_hour);           WORK_START_HOUR=${WORK_START_HOUR:-8}
+WORK_END_HOUR=$(cfg work_end_hour);               WORK_END_HOUR=${WORK_END_HOUR:-18}
+
+# Decide sleep interval (active = browser touched .active file in last 5 min)
+ACTIVE_FILE="$OUT_DIR/.active"
+if [ -f "$ACTIVE_FILE" ] && \
+   [ $(( $(date +%s) - $(stat -f %m "$ACTIVE_FILE") )) -lt 300 ]; then
+    SLEEP=$POLL_ACTIVE
+else
+    SLEEP=$POLL_IDLE
+fi
+NEXT_POLL=$(date -u -v+${SLEEP}S +%Y-%m-%dT%H:%M:%SZ)
+
+# Load build/sonar cache (read once; available to process_prs_to_json subshells)
+CACHE=$(cat "$CACHE_FILE" 2>/dev/null || echo '{}')
+CACHE_UPDATES=$(mktemp)
+
 log "Fetching Bitbucket PRs..."
 MY_PRS_RAW=$(curl -s -H "Authorization: Bearer $PASSWORD" \
     "$STASH_URL/rest/api/1.0/dashboard/pull-requests?state=OPEN&role=AUTHOR")
@@ -185,24 +265,28 @@ REVIEWER_PRS_RAW=$(curl -s -H "Authorization: Bearer $PASSWORD" \
         ))) | .size = ((.values // []) | length)
     ')
 
-MY_PRS_JSON=$(process_prs_to_json "$MY_PRS_RAW" | jq -s '.')
-REV_PRS_JSON=$(process_prs_to_json "$REVIEWER_PRS_RAW" | jq -s '.')
+MY_PRS_JSON=$(process_prs_to_json "$MY_PRS_RAW"       "$CACHE_UPDATES" | jq -s '.')
+REV_PRS_JSON=$(process_prs_to_json "$REVIEWER_PRS_RAW" "$CACHE_UPDATES" | jq -s '.')
 
-POLL_ACTIVE=${POLL_ACTIVE:-$(cfg poll_active_seconds)}
-POLL_IDLE=${POLL_IDLE:-$(cfg poll_idle_seconds)}
-POLL_ACTIVE=${POLL_ACTIVE:-20}
-POLL_IDLE=${POLL_IDLE:-60}
-ACTIVE_FILE="$OUT_DIR/.active"
-if [ -f "$ACTIVE_FILE" ] && \
-   [ $(( $(date +%s) - $(stat -f %m "$ACTIVE_FILE") )) -lt 300 ]; then
-    SLEEP=$POLL_ACTIVE
-else
-    SLEEP=$POLL_IDLE
+fetched_count=$(wc -l < "$CACHE_UPDATES" | tr -d ' ')
+log "Bitbucket: $(echo "$MY_PRS_JSON" | jq 'length') my PRs, $(echo "$REV_PRS_JSON" | jq 'length') for review (${fetched_count} build/sonar fetched)"
+
+# Merge cache updates (each line is one JSON object keyed by PR id)
+if [ -s "$CACHE_UPDATES" ]; then
+    jq -s --argjson base "$CACHE" \
+        'reduce .[] as $x ($base; . * $x)' \
+        "$CACHE_UPDATES" > "${CACHE_FILE}.tmp" && \
+    mv "${CACHE_FILE}.tmp" "$CACHE_FILE"
 fi
-NEXT_POLL=$(date -u -v+${SLEEP}S +%Y-%m-%dT%H:%M:%SZ)
-WORK_HOURS_ENABLED=$(cfg work_hours_enabled); WORK_HOURS_ENABLED=${WORK_HOURS_ENABLED:-true}
-WORK_START_HOUR=$(cfg work_start_hour);       WORK_START_HOUR=${WORK_START_HOUR:-8}
-WORK_END_HOUR=$(cfg work_end_hour);           WORK_END_HOUR=${WORK_END_HOUR:-18}
+rm -f "$CACHE_UPDATES"
+
+# Evict cache entries for PRs that are no longer open
+ALL_IDS=$(echo "$MY_PRS_JSON" "$REV_PRS_JSON" | \
+    jq -s '[.[].[] | .id | tostring] | unique')
+jq --argjson ids "$ALL_IDS" \
+    'with_entries(select(.key as $k | ($ids | index($k)) != null))' \
+    "${CACHE_FILE}" 2>/dev/null > "${CACHE_FILE}.tmp" && \
+mv "${CACHE_FILE}.tmp" "$CACHE_FILE"
 
 jq -n \
     --argjson my_prs "$MY_PRS_JSON" \
@@ -216,8 +300,6 @@ jq -n \
     '{my_prs:$my_prs, reviewer_prs:$reviewer_prs, stash_url:$stash_url, updated:$updated, next_poll:$next_poll, work_hours_enabled:$work_hours_enabled, work_start_hour:$work_start_hour, work_end_hour:$work_end_hour}' \
     > "$BB_OUT"
 
-log "Bitbucket: $(echo "$MY_PRS_JSON" | jq 'length') my PRs, $(echo "$REV_PRS_JSON" | jq 'length') for review"
-
 # ── Jira ──
 log "Fetching Jira issues..."
 
@@ -227,6 +309,9 @@ JQL_MINE="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND assignee =
 # Query 2: issues I implemented (moved out of Implement), now in QA/BV/Resolved
 JQL_IMPL="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND status in (\"Quality Assurance\",\"Business Validation\",\"Resolved\") AND status CHANGED FROM \"Implement\" BY currentUser() ORDER BY updated DESC"
 
+# Query 3: all sprint QA issues with teknisk_QA label (any assignee)
+JQL_TQA="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND status = \"Quality Assurance\" AND labels = \"teknisk_QA\" ORDER BY updated DESC"
+
 JQ_PROJ='[.issues[]? | {
     key:        .key,
     summary:    .fields.summary,
@@ -235,6 +320,17 @@ JQ_PROJ='[.issues[]? | {
     priority:   .fields.priority.name,
     updated:    .fields.updated,
     teknisk_qa: ((.fields.labels // []) | any(. == "teknisk_QA"))
+}]'
+
+JQ_PROJ_TQA='[.issues[]? | {
+    key:            .key,
+    summary:        .fields.summary,
+    status:         (.fields.status.name | ascii_upcase),
+    type:           .fields.issuetype.name,
+    priority:       .fields.priority.name,
+    updated:        .fields.updated,
+    teknisk_qa:     true,
+    assigned_to_me: ((.fields.assignee.name // "") == $username)
 }]'
 
 MINE_JSON=$(curl -s \
@@ -255,20 +351,33 @@ IMPL_JSON=$(curl -s \
     --data-urlencode "fields=summary,status,issuetype,priority,updated,labels" \
     | jq "$JQ_PROJ" 2>/dev/null || echo "[]")
 
+TQA_JSON=$(curl -s \
+    "$JIRA_URL/rest/api/2/search" \
+    -H "Authorization: Bearer $JIRA_PASSWORD" \
+    --get \
+    --data-urlencode "jql=$JQL_TQA" \
+    --data-urlencode "maxResults=50" \
+    --data-urlencode "fields=summary,status,issuetype,priority,updated,labels,assignee" \
+    | jq --arg username "$USERNAME" "$JQ_PROJ_TQA" 2>/dev/null || echo "[]")
+
 MINE_JSON=${MINE_JSON:-[]}
 IMPL_JSON=${IMPL_JSON:-[]}
+TQA_JSON=${TQA_JSON:-[]}
+
 ISSUES_JSON=$(jq -n --argjson a "$MINE_JSON" --argjson b "$IMPL_JSON" '
-  $a + ($b | map(select(.key as $k | ($a | map(.key) | index($k)) == null)))
+  ($a + ($b | map(select(.key as $k | ($a | map(.key) | index($k)) == null))))
+  | map(select(.teknisk_qa != true))
 ')
 
 jq -n \
     --argjson issues "$ISSUES_JSON" \
+    --argjson tqa_issues "$TQA_JSON" \
     --arg jira_url "$JIRA_URL" \
     --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{issues:$issues, jira_url:$jira_url, updated:$updated}' \
+    '{issues:$issues, tqa_issues:$tqa_issues, jira_url:$jira_url, updated:$updated}' \
     > "$JR_OUT"
 
-log "Jira: $(echo "$MINE_JSON" | jq 'length') mine + $(echo "$IMPL_JSON" | jq 'length') implemented = $(echo "$ISSUES_JSON" | jq 'length') issues written"
+log "Jira: $(echo "$MINE_JSON" | jq 'length') mine + $(echo "$IMPL_JSON" | jq 'length') implemented = $(echo "$ISSUES_JSON" | jq 'length') issues, $(echo "$TQA_JSON" | jq 'length') tekn_qa"
 
 log "Done. BB → $BB_OUT  |  Jira → $JR_OUT. Sleeping ${SLEEP}s (next_poll: $NEXT_POLL)."
 sleep "$SLEEP"

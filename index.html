@@ -27,8 +27,11 @@
       color: var(--text);
       font-family: 'Share Tech Mono', monospace;
       font-size: 19px;
-      min-height: 100vh;
-      padding-bottom: 30px;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 26px; /* room for fixed statusbar */
     }
 
     body::after {
@@ -123,7 +126,10 @@
     main {
       display: grid;
       grid-template-columns: 1fr 270px;
-      grid-template-rows: auto auto auto;
+      grid-template-rows: auto 1fr auto;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
     }
 
     section, aside {
@@ -141,12 +147,11 @@
     }
 
     /* ── PR LIST ── */
-    #my-prs    { grid-column: 1; grid-row: 1; }
-    #jira-kanban { grid-column: 1; grid-row: 2; }
-    #activity-feed { grid-column: 2; grid-row: 1 / 3; border-right: none; }
+    #my-prs      { grid-column: 1; grid-row: 1; }
+    #jira-kanban { grid-column: 1; grid-row: 2; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    #activity-feed { grid-column: 2; grid-row: 1 / 3; border-right: none; overflow-y: auto; min-height: 0; }
     #reviewer-prs  { grid-column: 1 / 3; grid-row: 3; border-right: none; }
 
-    .pr-list { min-height: 36px; }
 
     .pr-item { border-bottom: 1px solid rgba(74,45,0,0.35); }
     .pr-item:last-child { border-bottom: none; }
@@ -219,12 +224,25 @@
     #kanban-cols {
       display: grid;
       grid-template-columns: repeat(5, 1fr);
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
     }
 
-    .kanban-col { border-right: 1px solid var(--border); }
+    .kanban-col {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
     .kanban-col:last-child { border-right: none; }
 
-    #cards-resolved { overflow-y: auto; }
+    #cards-open, #cards-implement, #cards-qa, #cards-bv, #cards-resolved {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+    }
 
     .col-header {
       padding: 4px 10px;
@@ -235,6 +253,7 @@
       color: var(--dim);
       display: flex;
       justify-content: space-between;
+      flex-shrink: 0;
     }
     .col-count { color: var(--bright); }
     .review-hdr { color: var(--bright); border-bottom-color: var(--bright); }
@@ -266,7 +285,7 @@
     .t-story { color: var(--blue); border-color: var(--blue); }
     .t-bug   { color: var(--red);  border-color: var(--red); }
     .t-task  { color: var(--dim);  border-color: var(--border); }
-    .tqa-badge { font-size: 14px; padding: 0 4px; border: 1px solid var(--yellow); color: var(--yellow); letter-spacing: 1px; }
+    .tqa-badge { font-size: 14px; padding: 0 4px; border: 1px solid var(--blue); color: var(--blue); letter-spacing: 1px; }
     .t-other { color: var(--dim);  border-color: var(--border); }
 
     .prio      { font-size: 16px; }
@@ -582,7 +601,8 @@
 
   function jiraCard(issue) {
     const url = JIRA ? `${JIRA}/browse/${esc(issue.key)}` : null;
-    const keyColor = (issue.teknisk_qa && issue.status !== 'RESOLVED') ? 'var(--green)' : 'var(--bright)';
+    const highlighted = 'assigned_to_me' in issue ? issue.assigned_to_me : false;
+    const keyColor = highlighted ? 'var(--green)' : 'var(--bright)';
     const keyHtml = url
       ? `<a href="${url}" target="_blank" rel="noopener" style="color:${keyColor};text-decoration:none">${esc(issue.key)}</a>`
       : `<span style="color:${keyColor}">${esc(issue.key)}</span>`;
@@ -600,10 +620,11 @@
   // ── Render ──────────────────────────────────────────────────────────────
 
   function renderAll(bb, jira) {
-    const myPRs  = bb.my_prs ?? [];
-    const revPRs = bb.reviewer_prs ?? [];
-    const issues = jira.issues ?? [];
-    const active = issues.filter(i => i.status !== 'RESOLVED');
+    const myPRs    = bb.my_prs ?? [];
+    const revPRs   = bb.reviewer_prs ?? [];
+    const issues   = jira.issues ?? [];
+    const tqaIssues = jira.tqa_issues ?? [];
+    const active   = issues.filter(i => i.status !== 'RESOLVED');
     const failing = myPRs.filter(p => p.build_state === 'FAILED').length;
 
     // Stats
@@ -623,13 +644,12 @@
     // Reviewer PRs
     document.getElementById('reviewer-prs-list').innerHTML = revPRs.length
       ? revPRs.map(p => prRow(p, true)).join('')
-      : '<div class="empty-msg">no PRs awaiting review</div>';
+      : '';
 
     // Kanban columns
     const cols = {
       open:      issues.filter(i => i.status === 'OPEN' || i.status === 'REOPENED'),
       implement: issues.filter(i => i.status === 'IMPLEMENT'),
-      qa:        issues.filter(i => i.status === 'QUALITY ASSURANCE'),
       bv:        issues.filter(i => i.status === 'BUSINESS VALIDATION'),
       resolved:  issues.filter(i => i.status === 'RESOLVED'),
     };
@@ -639,11 +659,17 @@
         ? cards.map(jiraCard).join('')
         : '<div style="padding:8px 10px;color:var(--dim);font-size:14px">–</div>';
     }
-    requestAnimationFrame(() => {
-      const tallest = Math.max(0, ...['cards-open','cards-implement','cards-qa','cards-bv']
-        .map(id => document.getElementById(id).offsetHeight));
-      if (tallest > 0) document.getElementById('cards-resolved').style.maxHeight = tallest + 'px';
-    });
+    // QA column: tqa_issues first (highlighted), then regular QA issues below
+    const qaRegular = issues.filter(i => i.status === 'QUALITY ASSURANCE');
+    const qaCount = tqaIssues.length + qaRegular.length;
+    document.getElementById('cnt-qa').textContent = qaCount;
+    let qaHtml = tqaIssues.map(jiraCard).join('');
+    if (tqaIssues.length && qaRegular.length) {
+      qaHtml += '<div style="border-top:1px solid var(--border);margin:4px 0 8px"></div>';
+    }
+    qaHtml += qaRegular.map(jiraCard).join('');
+    document.getElementById('cards-qa').innerHTML = qaHtml ||
+      '<div style="padding:8px 10px;color:var(--dim);font-size:14px">–</div>';
 
     // Jira quick stats (by type)
     const byType = {};
