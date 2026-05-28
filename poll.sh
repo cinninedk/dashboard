@@ -222,18 +222,19 @@ log "Bitbucket: $(echo "$MY_PRS_JSON" | jq 'length') my PRs, $(echo "$REV_PRS_JS
 log "Fetching Jira issues..."
 
 # Query 1: issues currently assigned to me (Open/Reopened/Implement)
-JQL_MINE="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND assignee = currentUser() AND status in (\"Open\",\"Reopened\",\"Implement\") ORDER BY updated DESC"
+JQL_MINE="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND assignee = currentUser() AND status in (\"Open\",\"Reopened\",\"Implement\",\"Quality Assurance\",\"Business Validation\",\"Resolved\") ORDER BY updated DESC"
 
 # Query 2: issues I implemented (moved out of Implement), now in QA/BV/Resolved
 JQL_IMPL="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND status in (\"Quality Assurance\",\"Business Validation\",\"Resolved\") AND status CHANGED FROM \"Implement\" BY currentUser() ORDER BY updated DESC"
 
 JQ_PROJ='[.issues[]? | {
-    key:     .key,
-    summary: .fields.summary,
-    status:  (.fields.status.name | ascii_upcase),
-    type:    .fields.issuetype.name,
-    priority:.fields.priority.name,
-    updated: .fields.updated
+    key:        .key,
+    summary:    .fields.summary,
+    status:     (.fields.status.name | ascii_upcase),
+    type:       .fields.issuetype.name,
+    priority:   .fields.priority.name,
+    updated:    .fields.updated,
+    teknisk_qa: ((.fields.labels // []) | any(. == "teknisk_QA"))
 }]'
 
 MINE_JSON=$(curl -s \
@@ -242,7 +243,7 @@ MINE_JSON=$(curl -s \
     --get \
     --data-urlencode "jql=$JQL_MINE" \
     --data-urlencode "maxResults=50" \
-    --data-urlencode "fields=summary,status,issuetype,priority,updated" \
+    --data-urlencode "fields=summary,status,issuetype,priority,updated,labels" \
     | jq "$JQ_PROJ" 2>/dev/null || echo "[]")
 
 IMPL_JSON=$(curl -s \
@@ -251,10 +252,14 @@ IMPL_JSON=$(curl -s \
     --get \
     --data-urlencode "jql=$JQL_IMPL" \
     --data-urlencode "maxResults=50" \
-    --data-urlencode "fields=summary,status,issuetype,priority,updated" \
+    --data-urlencode "fields=summary,status,issuetype,priority,updated,labels" \
     | jq "$JQ_PROJ" 2>/dev/null || echo "[]")
 
-ISSUES_JSON=$(jq -n --argjson a "$MINE_JSON" --argjson b "$IMPL_JSON" '$a + $b')
+MINE_JSON=${MINE_JSON:-[]}
+IMPL_JSON=${IMPL_JSON:-[]}
+ISSUES_JSON=$(jq -n --argjson a "$MINE_JSON" --argjson b "$IMPL_JSON" '
+  $a + ($b | map(select(.key as $k | ($a | map(.key) | index($k)) == null)))
+')
 
 jq -n \
     --argjson issues "$ISSUES_JSON" \

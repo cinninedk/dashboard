@@ -224,6 +224,8 @@
     .kanban-col { border-right: 1px solid var(--border); }
     .kanban-col:last-child { border-right: none; }
 
+    #cards-resolved { overflow-y: auto; }
+
     .col-header {
       padding: 4px 10px;
       background: var(--panel);
@@ -264,6 +266,7 @@
     .t-story { color: var(--blue); border-color: var(--blue); }
     .t-bug   { color: var(--red);  border-color: var(--red); }
     .t-task  { color: var(--dim);  border-color: var(--border); }
+    .tqa-badge { font-size: 14px; padding: 0 4px; border: 1px solid var(--yellow); color: var(--yellow); letter-spacing: 1px; }
     .t-other { color: var(--dim);  border-color: var(--border); }
 
     .prio      { font-size: 16px; }
@@ -588,6 +591,7 @@
         <div class="card-summary">${esc(issue.summary)}</div>
         <div class="card-meta">
           <span class="type-badge ${typeClass(issue.type)}">${esc(issue.type ?? '?')}</span>
+          ${issue.teknisk_qa ? '<span class="tqa-badge">TEKN·QA</span>' : ''}
         </div>
       </div>`;
   }
@@ -634,6 +638,11 @@
         ? cards.map(jiraCard).join('')
         : '<div style="padding:8px 10px;color:var(--dim);font-size:14px">–</div>';
     }
+    requestAnimationFrame(() => {
+      const tallest = Math.max(0, ...['cards-open','cards-implement','cards-qa','cards-bv']
+        .map(id => document.getElementById(id).offsetHeight));
+      if (tallest > 0) document.getElementById('cards-resolved').style.maxHeight = tallest + 'px';
+    });
 
     // Jira quick stats (by type)
     const byType = {};

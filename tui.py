@@ -445,12 +445,13 @@ def render_kanban(win, bb: dict | None, jira: dict | None):
         for issue in cols[name]:
             if row >= max_y - 1:
                 break
-            key     = issue.get("key", "?")
-            summary = issue.get("summary", "")
-            itype   = issue.get("type", "")
-            tc      = type_col(itype)
-            jira_url = (jira.get("jira_url", "") if jira else "") or ""
-            issue_url = f"{jira_url}/browse/{key}" if jira_url else ""
+            key        = issue.get("key", "?")
+            summary    = issue.get("summary", "")
+            itype      = issue.get("type", "")
+            teknisk_qa = issue.get("teknisk_qa", False)
+            tc         = type_col(itype)
+            jira_url   = (jira.get("jira_url", "") if jira else "") or ""
+            issue_url  = f"{jira_url}/browse/{key}" if jira_url else ""
 
             safe_addlink(win, row, card_x,
                          trunc(key, card_w), issue_url, ca(C_BRIGHT))
@@ -463,8 +464,12 @@ def render_kanban(win, bb: dict | None, jira: dict | None):
             row += 1
             if row >= max_y - 1:
                 break
-            # type tag
-            safe_addstr(win, row, card_x, trunc(itype, card_w), ca(tc))
+            # type tag + optional TEKN·QA badge
+            type_str = trunc(itype, card_w)
+            safe_addstr(win, row, card_x, type_str, ca(tc))
+            if teknisk_qa:
+                bx = card_x + len(type_str) + 1
+                safe_addstr(win, row, bx, "TEKN·QA", ca(C_YELLOW))
             row += 1
             # blank separator
             row += 1
