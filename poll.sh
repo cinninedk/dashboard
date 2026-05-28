@@ -304,7 +304,7 @@ jq -n \
 log "Fetching Jira issues..."
 
 # Query 1: issues currently assigned to me (Open/Reopened/Implement)
-JQL_MINE="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND assignee = currentUser() AND status in (\"Open\",\"Reopened\",\"Implement\",\"Quality Assurance\",\"Business Validation\",\"Resolved\") ORDER BY updated DESC"
+JQL_MINE="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND assignee = currentUser() AND status in (\"Open\",\"Reopened\",\"Implement\",\"Quality Assurance\",\"Business Validation\") ORDER BY updated DESC"
 
 # Query 2: issues I implemented (moved out of Implement), now in QA/BV/Resolved
 JQL_IMPL="sprint in openSprints() AND project in ($JIRA_PROJECTS) AND status in (\"Quality Assurance\",\"Business Validation\",\"Resolved\") AND status CHANGED FROM \"Implement\" BY currentUser() ORDER BY updated DESC"
